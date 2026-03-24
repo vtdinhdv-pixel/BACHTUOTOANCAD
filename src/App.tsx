@@ -182,11 +182,28 @@ export default function App() {
     };
   }, [isAuthReady, user, userRole, isTeacherAuthenticated]);
 
+  const [authError, setAuthError] = useState<string | null>(null);
+
   const handleLogin = async () => {
+    setAuthError(null);
     try {
       await signInWithPopup(auth, googleProvider);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Login error:", error);
+      let message = "Đăng nhập thất bại. Vui lòng thử lại.";
+      
+      if (error.code === 'auth/popup-blocked') {
+        message = "Trình duyệt đã chặn cửa sổ đăng nhập. Em hãy cho phép hiện popup hoặc thử lại nhé.";
+      } else if (error.code === 'auth/cancelled-popup-request') {
+        message = "Yêu cầu đăng nhập đã bị hủy.";
+      } else if (error.code === 'auth/operation-not-allowed') {
+        message = "Hệ thống chưa bật đăng nhập Google. Thầy cô cần bật trong Firebase Console.";
+      } else if (error.code === 'auth/unauthorized-domain') {
+        message = "Tên miền này chưa được phép đăng nhập. Thầy cô cần thêm vào Authorized Domains trong Firebase.";
+      }
+      
+      setAuthError(message);
+      alert(message);
     }
   };
 
@@ -349,6 +366,16 @@ export default function App() {
             <LogIn size={20} className="text-blue-500" />
             Đăng nhập với Google
           </button>
+
+          {authError && (
+            <motion.div 
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mt-4 p-3 bg-red-50 text-red-600 text-sm rounded-xl border border-red-100 text-center"
+            >
+              {authError}
+            </motion.div>
+          )}
           
           <p className="mt-8 text-xs text-gray-400 italic">
             Học toán lớp 6 thật vui cùng Bạch Tuộc Trạng Nguyên!
@@ -384,7 +411,6 @@ export default function App() {
 
         <main className="flex-1 overflow-hidden">
           <ChatInterface 
-            key={chatSessionId}
             sessionId={chatSessionId}
             onNewChat={handleNewChat}
             onMessageSent={handleNewQuestion} 
