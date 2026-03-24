@@ -152,98 +152,111 @@ export default function ChatInterface({
     return newStats; 
   };
 
+  const [isLocalMode, setIsLocalMode] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Load/Sync Messages from Firestore
+  // Load/Sync Messages
   useEffect(() => {
     if (!auth.currentUser) return;
-
     gemini.resetChat();
 
-    let unsubscribe: (() => void) | undefined;
-
+    let unsubscribe: () => void;
+    
     const setupChat = async () => {
-      if (!auth.currentUser) return;
-
-      const sessionRef = doc(db, "chatSessions", sessionId);
       try {
+        const sessionRef = doc(db, "chatSessions", sessionId);
         await setDoc(sessionRef, {
-          studentUid: auth.currentUser.uid,
-          studentName: auth.currentUser.displayName || "Học sinh",
+          studentUid: auth.currentUser!.uid,
+          studentName: auth.currentUser!.displayName || "Học sinh",
           createdAt: serverTimestamp(),
           lastMessageAt: serverTimestamp()
         }, { merge: true });
-      } catch (e) {
-        handleFirestoreError(e, OperationType.WRITE, `chatSessions/${sessionId}`);
-        return;
-      }
 
-      const messagesRef = collection(db, "chatSessions", sessionId, "messages");
-      const q = query(messagesRef, orderBy("timestamp", "asc"));
+        const messagesRef = collection(db, "chatSessions", sessionId, "messages");
+        const q = query(messagesRef, orderBy("timestamp", "asc"));
 
-      unsubscribe = onSnapshot(q, (snapshot) => {
-        const fetchedMessages = snapshot.docs.map(doc => {
-          const data = doc.data();
-          return {
-            id: doc.id,
-            role: data.role,
-            content: data.content,
-            timestamp: data.timestamp?.toMillis() || Date.now(),
-            image: data.image
-          } as Message;
-        });
+        unsubscribe = onSnapshot(q, (snapshot) => {
+          const fetchedMessages = snapshot.docs.map(doc => {
+            const data = doc.data();
+            return {
+              id: doc.id,
+              role: data.role,
+              content: data.content,
+              timestamp: data.timestamp?.toMillis() || Date.now(),
+              image: data.image
+            } as Message;
+          });
 
-        if (fetchedMessages.length === 0) {
-          const welcomeMsg = {
-            role: "assistant",
-            senderUid: "assistant",
-            content: "Chào em! Mình là chú Bạch Tuộc Gia sư đây 😊. Hôm nay chúng ta sẽ cùng khám phá thế giới Toán lớp 6 nhé! \n\nEm đang gặp khó khăn ở bài nào? Ví dụ như **Phân số**, **Số nguyên** hay **Hình học**? Hãy gửi đề bài hoặc chụp ảnh cho mình xem nhé!",
-            timestamp: serverTimestamp(),
-            sessionId: sessionId
-          };
-          addDoc(messagesRef, welcomeMsg).catch(e => handleFirestoreError(e, OperationType.CREATE, `chatSessions/${sessionId}/messages`));
-        } else {
-          setMessages(fetchedMessages);
-          // Detect topic for visualization
-          const lastMsg = fetchedMessages[fetchedMessages.length - 1];
-          if (lastMsg && lastMsg.role === 'assistant') {
-             if (lastMsg.content.toLowerCase().includes("phân số")) {
-               setVisualizerData({ topic: "Phân số", data: { parts: 4, shaded: 1 } });
-             } else if (lastMsg.content.toLowerCase().includes("số nguyên")) {
-               setVisualizerData({ topic: "Số nguyên", data: { value: 2 } });
-             }
+          if (fetchedMessages.length === 0) {
+            const welcomeMsg = {
+              role: "assistant",
+              senderUid: "assistant",
+              content: "Chào em! Mình là chú Bạch Tuộc Gia sư đây 😊. Hôm nay chúng ta sẽ cùng khám phá thế giới Toán lớp 6 nhé! \n\nEm đang gặp khó khăn ở bài nào? Ví dụ như **Phân số**, **Số nguyên** hay **Hình học**? Hãy gửi đề bài hoặc chụp ảnh cho mình xem nhé!",
+              timestamp: serverTimestamp(),
+              sessionId: sessionId
+            };
+            addDoc(messagesRef, welcomeMsg).catch(() => {
+              setIsLocalMode(true);
+              setMessages([{ ...welcomeMsg, id: 'welcome', timestamp: Date.now() } as Message]);
+            });
+          } else {
+            setMessages(fetchedMessages);
           }
-        }
-      }, (error) => {
-        handleFirestoreError(error, OperationType.LIST, `chatSessions/${sessionId}/messages`);
-      });
+        }, (error) => {
+          console.warn("Firestore error, switching to local mode.", error);
+          setIsLocalMode(true);
+          if (messages.length === 0) {
+            setMessages([{
+              id: 'welcome',
+              role: 'assistant',
+              content: "Chào em! Mình là chú Bạch Tuộc Gia sư đây 😊. (Chế độ Khách)",
+              timestamp: Date.now()
+            } as Message]);
+          }
+        });
+      } catch (err) {
+        console.warn("Firestore setup failed, using local mode.");
+        setIsLocalMode(true);
+        setMessages([{
+          id: 'welcome',
+          role: 'assistant',
+          content: "Chào em! Mình là chú Bạch Tuộc Gia sư đây 😊.",
+          timestamp: Date.now()
+        } as Message]);
+      }
     };
 
     setupChat();
-
-    return () => {
-      if (unsubscribe) unsubscribe();
-    };
+    return () => { if (unsubscribe) unsubscribe(); };
   }, [sessionId]);
 
   // Handle teacher response
   useEffect(() => {
     if (teacherResponse && auth.currentUser) {
-      const messagesRef = collection(db, "chatSessions", sessionId, "messages");
-      addDoc(messagesRef, {
-        role: "teacher",
+      const newMessage = {
+        role: "teacher" as const,
         senderUid: "teacher",
         content: teacherResponse.content,
-        timestamp: serverTimestamp(),
+        timestamp: Date.now(),
         sessionId: sessionId
-      }).catch(e => handleFirestoreError(e, OperationType.CREATE, `chatSessions/${sessionId}/messages`));
+      };
+
+      if (isLocalMode) {
+        setMessages(prev => [...prev, { ...newMessage, id: Date.now().toString() } as Message]);
+      } else {
+        const messagesRef = collection(db, "chatSessions", sessionId, "messages");
+        addDoc(messagesRef, { ...newMessage, timestamp: serverTimestamp() }).catch(e => {
+          console.error("Failed to save teacher response:", e);
+          setMessages(prev => [...prev, { ...newMessage, id: Date.now().toString() } as Message]);
+        });
+      }
       
       if (onTeacherResponseHandled) {
         onTeacherResponseHandled();
       }
     }
-  }, [teacherResponse, onTeacherResponseHandled, sessionId]);
+  }, [teacherResponse, onTeacherResponseHandled, sessionId, isLocalMode]);
 
   // Notify parent when stats change
   useEffect(() => {
@@ -265,42 +278,81 @@ export default function ChatInterface({
     if (!messageContent.trim() && !selectedImage) return;
     if (!auth.currentUser) return;
 
-    const messagesRef = collection(db, "chatSessions", sessionId, "messages");
-    
-    try {
-      await addDoc(messagesRef, {
-        role: "user",
-        senderUid: auth.currentUser.uid,
-        content: messageContent,
-        timestamp: serverTimestamp(),
-        image: selectedImage || null,
-        sessionId: sessionId
-      });
+    const userMsg: Message = {
+      id: Date.now().toString(),
+      role: "user",
+      content: messageContent,
+      timestamp: Date.now(),
+      image: selectedImage || undefined
+    };
 
-      if (messageContent.trim() && onMessageSent) {
-        onMessageSent(messageContent.trim());
+    if (isLocalMode) {
+      setMessages(prev => [...prev, userMsg]);
+    } else {
+      const messagesRef = collection(db, "chatSessions", sessionId, "messages");
+      try {
+        await addDoc(messagesRef, {
+          role: "user",
+          senderUid: auth.currentUser.uid,
+          content: messageContent,
+          timestamp: serverTimestamp(),
+          image: selectedImage || null,
+          sessionId: sessionId
+        });
+      } catch (error) {
+        console.warn("Write failed, switching to local mode", error);
+        setIsLocalMode(true);
+        setMessages(prev => [...prev, userMsg]);
       }
+    }
 
-      setInput("");
-      setSelectedImage(null);
-      setIsLoading(true);
+    if (messageContent.trim() && onMessageSent) {
+      onMessageSent(messageContent.trim());
+    }
 
+    setInput("");
+    setSelectedImage(null);
+    setIsLoading(true);
+
+    try {
       const response = await gemini.sendMessage(messageContent, selectedImage || undefined);
-      
-      await addDoc(messagesRef, {
+      const assistantMsg: Message = {
+        id: (Date.now() + 1).toString(),
         role: "assistant",
-        senderUid: "assistant",
         content: response || "Mình chưa rõ lắm, em nói lại được không? 😊",
-        timestamp: serverTimestamp(),
-        sessionId: sessionId
-      });
+        timestamp: Date.now()
+      };
 
-      await setDoc(doc(db, "chatSessions", sessionId), {
-        lastMessageAt: serverTimestamp()
-      }, { merge: true });
+      if (isLocalMode) {
+        setMessages(prev => [...prev, assistantMsg]);
+      } else {
+        const messagesRef = collection(db, "chatSessions", sessionId, "messages");
+        try {
+          await addDoc(messagesRef, {
+            role: "assistant",
+            senderUid: "assistant",
+            content: assistantMsg.content,
+            timestamp: serverTimestamp(),
+            sessionId: sessionId
+          });
 
+          await setDoc(doc(db, "chatSessions", sessionId), {
+            lastMessageAt: serverTimestamp()
+          }, { merge: true });
+        } catch (error) {
+          console.warn("Failed to save assistant response to Firestore", error);
+          setMessages(prev => [...prev, assistantMsg]);
+        }
+      }
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `chatSessions/${sessionId}/messages`);
+      console.error("Gemini Error:", error);
+      const errorMsg: Message = {
+        id: 'err-' + Date.now(),
+        role: 'assistant',
+        content: "Có lỗi xảy ra khi kết nối với AI. Hãy kiểm tra API Key trong phần Cài đặt nhé!",
+        timestamp: Date.now()
+      };
+      setMessages(prev => [...prev, errorMsg]);
     } finally {
       setIsLoading(false);
     }
@@ -322,14 +374,28 @@ export default function ChatInterface({
       onTeacherRequest(requestText);
     }
 
-    const messagesRef = collection(db, "chatSessions", sessionId, "messages");
-    addDoc(messagesRef, {
+    const newMessage: Message = {
+      id: 'req-' + Date.now(),
       role: "user",
-      senderUid: auth.currentUser.uid,
       content: "Mình muốn nhờ thầy cô giúp đỡ bài này ạ!",
-      timestamp: serverTimestamp(),
-      sessionId: sessionId
-    }).catch(e => handleFirestoreError(e, OperationType.CREATE, `chatSessions/${sessionId}/messages`));
+      timestamp: Date.now()
+    };
+
+    if (isLocalMode) {
+      setMessages(prev => [...prev, newMessage]);
+    } else {
+      const messagesRef = collection(db, "chatSessions", sessionId, "messages");
+      addDoc(messagesRef, {
+        role: "user",
+        senderUid: auth.currentUser.uid,
+        content: newMessage.content,
+        timestamp: serverTimestamp(),
+        sessionId: sessionId
+      }).catch(e => {
+        console.warn("Failed to save teacher request to Firestore", e);
+        setMessages(prev => [...prev, newMessage]);
+      });
+    }
   };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {

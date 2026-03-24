@@ -70,14 +70,14 @@ Luôn mở đầu bằng: “Chúng ta cùng làm nhé 😊”.
 
 
 export const MODELS = [
-  "gemini-3-flash-preview", 
-  "gemini-3-pro-preview", 
-  "gemini-2.5-flash"
+  "gemini-1.5-flash", 
+  "gemini-1.5-pro", 
+  "gemini-1.0-pro"
 ];
 
 export class GeminiService {
-  private ai: GoogleGenAI | null = null;
-  private chat: any = null;
+  private genAI: GoogleGenAI | null = null;
+  private chatSession: any = null;
   private currentModelIndex = 0;
 
   constructor() {
@@ -87,22 +87,25 @@ export class GeminiService {
   private initAI() {
     const apiKey = this.getApiKey();
     if (apiKey) {
-      this.ai = new GoogleGenAI({ apiKey });
+      this.genAI = new GoogleGenAI(apiKey);
       this.initChat();
     }
   }
 
   private getApiKey(): string {
-    return localStorage.getItem("gemini_api_key") || process.env.API_KEY || process.env.GEMINI_API_KEY || "";
+    return localStorage.getItem("gemini_api_key") || "";
   }
 
   private initChat() {
-    if (!this.ai) return;
+    if (!this.genAI) return;
     try {
-      this.chat = this.ai.chats.create({
+      const model = this.genAI.getGenerativeModel({ 
         model: MODELS[this.currentModelIndex],
-        config: {
-          systemInstruction: SYSTEM_INSTRUCTION,
+        systemInstruction: SYSTEM_INSTRUCTION
+      });
+      this.chatSession = model.startChat({
+        history: [],
+        generationConfig: {
           temperature: 0.7,
         },
       });
@@ -122,25 +125,31 @@ export class GeminiService {
       return "Ôi, mình chưa thấy 'chìa khóa' (API Key) đâu cả. Em hãy bấm vào nút Cài đặt (hình bánh răng) ở phía trên để nhập API Key nhé! 😊";
     }
 
-    if (!this.ai) this.initAI();
-    if (!this.ai) return "Lỗi khởi tạo AI. Vui lòng kiểm tra lại API Key.";
+    if (!this.genAI) this.initAI();
+    if (!this.genAI) return "Lỗi khởi tạo AI. Vui lòng kiểm tra lại API Key.";
 
     try {
+      const model = this.genAI.getGenerativeModel({ 
+        model: MODELS[this.currentModelIndex],
+        systemInstruction: SYSTEM_INSTRUCTION
+      });
+
       if (imageBase64WithHeader) {
         const mimeTypeMatch = imageBase64WithHeader.match(/^data:(image\/[a-zA-Z]+);base64,/);
         const mimeType = mimeTypeMatch ? mimeTypeMatch[1] : "image/jpeg";
         const base64Data = imageBase64WithHeader.replace(/^data:image\/[a-zA-Z]+;base64,/, "");
 
-        const response = await this.ai.models.generateContent({
-          model: MODELS[this.currentModelIndex],
-          contents: [{ role: "user", parts: [{ inlineData: { mimeType, data: base64Data } }, { text: message || "Hãy giúp mình giải bài toán này" }] }],
-          config: { systemInstruction: SYSTEM_INSTRUCTION }
-        });
-        return response.text;
+        const result = await model.generateContent([
+          { inlineData: { mimeType, data: base64Data } },
+          { text: message || "Hãy giúp mình giải bài toán này" }
+        ]);
+        const response = await result.response;
+        return response.text();
       } else {
-        if (!this.chat) this.initChat();
-        const response = await this.chat.sendMessage({ message });
-        return response.text;
+        if (!this.chatSession) this.initChat();
+        const result = await this.chatSession.sendMessage(message);
+        const response = await result.response;
+        return response.text();
       }
     } catch (error: any) {
       console.error(`Gemini Error (${MODELS[this.currentModelIndex]}):`, error);
@@ -149,7 +158,7 @@ export class GeminiService {
       if (this.currentModelIndex < MODELS.length - 1) {
         console.log(`Switching to model: ${MODELS[this.currentModelIndex + 1]}`);
         this.currentModelIndex++;
-        if (!imageBase64WithHeader) this.initChat(); // Re-init chat for new model
+        this.initChat(); 
         return this.sendMessage(message, imageBase64WithHeader);
       }
 
