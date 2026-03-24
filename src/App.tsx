@@ -105,8 +105,8 @@ export default function App() {
   // Auth Listener
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      setUser(currentUser);
       if (currentUser) {
+        setUser(currentUser);
         // Check/Create user profile
         const userDocRef = doc(db, "users", currentUser.uid);
         try {
@@ -114,10 +114,9 @@ export default function App() {
           if (userDoc.exists()) {
             setUserRole(userDoc.data().role);
           } else {
-            // Default to student
             const newProfile = {
               uid: currentUser.uid,
-              displayName: currentUser.displayName,
+              displayName: currentUser.isAnonymous ? "Học sinh (Khách)" : currentUser.displayName,
               email: currentUser.email,
               photoURL: currentUser.photoURL,
               role: "student",
@@ -127,11 +126,28 @@ export default function App() {
             setUserRole("student");
           }
         } catch (error) {
-          handleFirestoreError(error, OperationType.GET, `users/${currentUser.uid}`);
+          console.warn("Firestore access restricted, using local profile.");
+          setUserRole("student");
         }
       } else {
-        setUserRole(null);
-        setIsTeacherAuthenticated(false);
+        // Automatically attempt anonymous login if no user is found
+        try {
+          const { signInAnonymously } = await import("firebase/auth");
+          await signInAnonymously(auth);
+        } catch (error) {
+          console.warn("Anonymous login failed or disabled. using local guest mode.");
+          // Fallback to manual local guest mode
+          let guestId = localStorage.getItem("guest_id") || "guest_" + Math.random().toString(36).substring(2, 11);
+          localStorage.setItem("guest_id", guestId);
+          
+          setUser({
+            uid: guestId,
+            displayName: "Học sinh (Khách)",
+            photoURL: null,
+            email: "guest@toanvui.edu.vn",
+          } as any);
+          setUserRole("student");
+        }
       }
       setIsAuthReady(true);
     });
@@ -199,7 +215,7 @@ export default function App() {
       } else if (error.code === 'auth/operation-not-allowed') {
         message = "Hệ thống chưa bật đăng nhập Google. Thầy cô cần bật trong Firebase Console.";
       } else if (error.code === 'auth/unauthorized-domain') {
-        message = "Tên miền này chưa được phép đăng nhập. Thầy cô cần thêm vào Authorized Domains trong Firebase.";
+        message = `Tên miền '${window.location.hostname}' chưa được phép đăng nhập. Thầy cô cần thêm vào Authorized Domains trong Firebase.`;
       }
       
       setAuthError(message);
@@ -209,7 +225,11 @@ export default function App() {
 
   const handleLogout = async () => {
     try {
+      if (user?.isAnonymous || user?.uid.startsWith("guest_")) {
+        localStorage.removeItem("guest_id");
+      }
       await signOut(auth);
+      window.location.reload(); // Fully reset the app state
     } catch (error) {
       console.error("Logout error:", error);
     }
@@ -336,51 +356,6 @@ export default function App() {
           transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
           className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full"
         />
-      </div>
-    );
-  }
-
-  if (!user) {
-    return (
-      <div className="flex flex-col items-center justify-center h-screen bg-gradient-to-br from-blue-400 to-indigo-600 p-6">
-        <motion.div 
-          initial={{ y: 20, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          className="bg-white p-8 rounded-[40px] shadow-2xl max-w-md w-full text-center"
-        >
-          <div className="w-24 h-24 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-6">
-             <svg viewBox="0 0 200 200" className="w-16 h-16">
-              <circle cx="100" cy="100" r="80" fill="#74b9ff" />
-              <circle cx="75" cy="85" r="10" fill="white" />
-              <circle cx="125" cy="85" r="10" fill="white" />
-              <path d="M80 130 Q100 150 120 130" stroke="white" strokeWidth="8" fill="none" strokeLinecap="round" />
-            </svg>
-          </div>
-          <h2 className="text-3xl font-serif font-bold text-gray-800 mb-2 uppercase">BẠCH TUỘC TOÁN VUI</h2>
-          <p className="text-gray-500 mb-8">Chào mừng em đến với thế giới Toán học! Hãy đăng nhập để bắt đầu học nhé.</p>
-          
-          <button 
-            onClick={handleLogin}
-            className="w-full flex items-center justify-center gap-3 py-4 px-6 bg-white border-2 border-gray-100 text-gray-700 font-bold rounded-2xl hover:bg-gray-50 transition-all shadow-lg active:scale-95"
-          >
-            <LogIn size={20} className="text-blue-500" />
-            Đăng nhập với Google
-          </button>
-
-          {authError && (
-            <motion.div 
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="mt-4 p-3 bg-red-50 text-red-600 text-sm rounded-xl border border-red-100 text-center"
-            >
-              {authError}
-            </motion.div>
-          )}
-          
-          <p className="mt-8 text-xs text-gray-400 italic">
-            Học toán lớp 6 thật vui cùng Bạch Tuộc Trạng Nguyên!
-          </p>
-        </motion.div>
       </div>
     );
   }
