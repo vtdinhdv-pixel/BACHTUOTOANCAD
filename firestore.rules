@@ -1,0 +1,141 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Fields:
+    //   - uid: string (required) - Firebase Auth UID
+    //   - displayName: string (optional) - User's name
+    //   - email: string (optional) - User's email
+    //   - photoURL: string (optional) - User's profile picture
+    //   - role: string (required, enum: ['student', 'teacher', 'admin']) - User's role
+    //   - createdAt: timestamp (required) - Account creation time
+    //
+    // Collection: chatSessions
+    // Fields:
+    //   - studentUid: string (required) - Owner of the session
+    //   - studentName: string (optional) - Name of the student
+    //   - createdAt: timestamp (required) - Session creation time
+    //   - lastMessageAt: timestamp (optional) - Last message time
+    //
+    // Collection: chatSessions/{sessionId}/messages
+    // Fields:
+    //   - sessionId: string (required) - Parent session ID
+    //   - senderUid: string (optional) - UID of sender
+    //   - content: string (required) - Text content
+    //   - role: string (required, enum: ['user', 'assistant', 'teacher']) - Role of sender
+    //   - timestamp: timestamp (required) - Message time
+    //
+    // Collection: teacherRequests
+    // Fields:
+    //   - studentUid: string (required) - UID of student
+    //   - studentName: string (optional) - Name of student
+    //   - content: string (required) - Request context
+    //   - status: string (required, enum: ['pending', 'responded']) - Request status
+    //   - timestamp: timestamp (required) - Request time
+    //   - response: string (optional) - Teacher's response
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "vtdinhdv@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isTeacher() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'teacher' || isAdmin());
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+    function isValidUser(data) {
+      return hasRequiredFields(['uid', 'role', 'createdAt']) &&
+             hasOnlyAllowedFields(['uid', 'displayName', 'email', 'photoURL', 'role', 'createdAt']) &&
+             data.uid is string && data.uid.size() > 0 &&
+             data.role in ['student', 'teacher', 'admin'] &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidChatSession(data) {
+      return hasRequiredFields(['studentUid', 'createdAt']) &&
+             data.studentUid is string &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidMessage(data) {
+      return hasRequiredFields(['sessionId', 'content', 'role', 'timestamp']) &&
+             data.content is string && data.content.size() > 0 && data.content.size() < 5000 &&
+             data.role in ['user', 'assistant', 'teacher'] &&
+             data.timestamp is timestamp;
+    }
+
+    function isValidTeacherRequest(data) {
+      return hasRequiredFields(['studentUid', 'content', 'status', 'timestamp']) &&
+             data.content is string && data.content.size() > 0 &&
+             data.status in ['pending', 'responded'] &&
+             data.timestamp is timestamp;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{uid} {
+      allow read: if isOwner(uid) || isTeacher();
+      allow create: if isAuthenticated() && isOwner(uid) && isValidUser(request.resource.data) && 
+                      (request.resource.data.role == 'student' || isAdmin());
+      allow update: if isAuthenticated() && isOwner(uid) && isValidUser(request.resource.data) &&
+                      (request.resource.data.role == resource.data.role || isAdmin());
+    }
+
+    match /chatSessions/{sessionId} {
+      allow read: if isAuthenticated() && (resource.data.studentUid == request.auth.uid || isTeacher());
+      allow create: if isAuthenticated() && request.resource.data.studentUid == request.auth.uid && isValidChatSession(request.resource.data);
+      allow update: if isAuthenticated() && (resource.data.studentUid == request.auth.uid || isTeacher()) && isValidChatSession(request.resource.data);
+      
+      match /messages/{messageId} {
+        allow read: if isAuthenticated() && (get(/databases/$(database)/documents/chatSessions/$(sessionId)).data.studentUid == request.auth.uid || isTeacher());
+        allow create: if isAuthenticated() && get(/databases/$(database)/documents/chatSessions/$(sessionId)).data.studentUid == request.auth.uid && isValidMessage(request.resource.data);
+      }
+    }
+
+    match /teacherRequests/{requestId} {
+      allow read: if isAuthenticated() && (resource.data.studentUid == request.auth.uid || isTeacher());
+      allow create: if isAuthenticated() && request.resource.data.studentUid == request.auth.uid && isValidTeacherRequest(request.resource.data);
+      allow update: if isAuthenticated() && (isTeacher() || (isOwner(resource.data.studentUid) && request.resource.data.status == resource.data.status)) && isValidTeacherRequest(request.resource.data);
+    }
+
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,0 +1,75 @@
+{
+  "entities": {
+    "users": {
+      "title": "User Profile",
+      "description": "Stores user profile information and roles.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "displayName": { "type": "string", "description": "User's display name" },
+        "email": { "type": "string", "description": "User's email address" },
+        "photoURL": { "type": "string", "description": "User's profile picture URL" },
+        "role": { "type": "string", "enum": ["student", "teacher", "admin"], "description": "User's role in the system" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Account creation timestamp" }
+      },
+      "required": ["uid", "role"]
+    },
+    "chatSessions": {
+      "title": "Chat Session",
+      "description": "Represents a single chat session for a student.",
+      "type": "object",
+      "properties": {
+        "studentUid": { "type": "string", "description": "UID of the student who owns the session" },
+        "studentName": { "type": "string", "description": "Name of the student" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Session creation timestamp" },
+        "lastMessageAt": { "type": "string", "format": "date-time", "description": "Timestamp of the last message" }
+      },
+      "required": ["studentUid", "createdAt"]
+    },
+    "messages": {
+      "title": "Message",
+      "description": "A single message within a chat session.",
+      "type": "object",
+      "properties": {
+        "sessionId": { "type": "string", "description": "ID of the parent chat session" },
+        "senderUid": { "type": "string", "description": "UID of the sender (student or AI)" },
+        "content": { "type": "string", "description": "Text content of the message" },
+        "role": { "type": "string", "enum": ["user", "assistant", "teacher"], "description": "Role of the message sender" },
+        "timestamp": { "type": "string", "format": "date-time", "description": "Message timestamp" }
+      },
+      "required": ["sessionId", "content", "role", "timestamp"]
+    },
+    "teacherRequests": {
+      "title": "Teacher Request",
+      "description": "A request for teacher assistance from a student.",
+      "type": "object",
+      "properties": {
+        "studentUid": { "type": "string", "description": "UID of the student" },
+        "studentName": { "type": "string", "description": "Name of the student" },
+        "content": { "type": "string", "description": "Context of the request" },
+        "status": { "type": "string", "enum": ["pending", "responded"], "description": "Status of the request" },
+        "timestamp": { "type": "string", "format": "date-time", "description": "Request timestamp" },
+        "response": { "type": "string", "description": "Teacher's response content" }
+      },
+      "required": ["studentUid", "content", "status", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": "users",
+      "description": "User profile documents."
+    },
+    "/chatSessions/{sessionId}": {
+      "schema": "chatSessions",
+      "description": "Collection of student chat sessions."
+    },
+    "/chatSessions/{sessionId}/messages/{messageId}": {
+      "schema": "messages",
+      "description": "Messages within a specific chat session."
+    },
+    "/teacherRequests/{requestId}": {
+      "schema": "teacherRequests",
+      "description": "Collection of assistance requests for teachers."
+    }
+  }
+}
